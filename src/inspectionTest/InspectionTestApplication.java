@@ -22,18 +22,22 @@ import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager;
 import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.PsiManager;
 import org.jdom.JDOMException;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
-/**
- * @author max
- */
+
 @SuppressWarnings("UseOfSystemOutOrSystemErr")
 public class InspectionTestApplication {
     private static final Logger LOG = Logger.getInstance("#com.intellij.codeInspection.InspectionApplication");
@@ -44,6 +48,7 @@ public class InspectionTestApplication {
     public String myStubProfile;
     public String myProfileName;
     public String myProfilePath;
+    public String myTestDirectory;
     public boolean myRunWithEditorSettings;
     public boolean myRunGlobalToolsOnly;
     private Project myProject;
@@ -136,6 +141,8 @@ public class InspectionTestApplication {
             }
             PsiDirectory psiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsDir);
 
+            runTests();
+
             final List<Tools> globalTools = new ArrayList<>();
             final List<Tools> localTools = new ArrayList<>();
             final List<Tools> globalSimpleTools = new ArrayList<>();
@@ -156,6 +163,8 @@ public class InspectionTestApplication {
 //                                    System.out.println(fix.getName() + " was applied to file " + problem.getPsiElement().getContainingFile().getName());
                                 fix.applyFix(context.getProject(), problem);
                             });
+                        } else {
+//                            fix.applyFix(context.getProject(), problem);
                         }
                     }
                 }
@@ -311,21 +320,71 @@ public class InspectionTestApplication {
 
     private List<ProblemDescriptor> inspectDirectoryRecursively(List<Tools> tools, GlobalInspectionContextImpl context, PsiDirectory directory) {
         List<ProblemDescriptor> problems = new ArrayList<>();
-        PsiFile[] files = directory.getFiles();
-        if (files != null && files.length != 0) {
-            for (PsiFile file : files) {
+        List<PsiFile> allFiles = getAllPsiFiles(directory);
+        if (allFiles.size() != 0) {
+            for (PsiFile file : allFiles) {
                 for (Tools tool : tools) {
                     problems.addAll(InspectionEngine.runInspectionOnFile(file, tool.getTool(), context));
                 }
             }
         }
+
+        return problems;
+    }
+
+    private List<PsiFile> getAllPsiFiles(PsiDirectory directory) {
+        List<PsiFile> files = new ArrayList<>();
+        PsiFile[] filesArray = directory.getFiles();
+        if (filesArray.length != 0) {
+            files.addAll(Arrays.asList(filesArray));
+        }
         PsiDirectory[] subdirectories = directory.getSubdirectories();
-        if (subdirectories != null && subdirectories.length != 0) {
+        if (subdirectories.length != 0) {
             for (PsiDirectory subdirectory : subdirectories) {
-                problems.addAll(inspectDirectoryRecursively(tools, context, subdirectory));
+                files.addAll(getAllPsiFiles(subdirectory));
             }
         }
 
-        return problems;
+        return files;
+    }
+
+    private void runTests() throws MalformedURLException, NoSuchFieldException, IllegalAccessException {
+        VirtualFile vfsTestDir = LocalFileSystem.getInstance().findFileByPath(myTestDirectory);
+        PsiDirectory testPsiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsTestDir);
+        List<PsiFile> psiTestFiles = getAllPsiFiles(testPsiDirectory);
+        List<String> classNames = new ArrayList<>();
+
+        for (PsiFile psiTestFile : psiTestFiles) {
+            String packageName = ((PsiJavaFile)psiTestFile).getPackageName();
+            if (packageName != "") packageName += ".";
+            String fullName =  packageName + psiTestFile.getVirtualFile().getNameWithoutExtension();
+            classNames.add(fullName);
+        }
+
+        JUnitRunner runner = new JUnitRunner();
+        URL test = new File("/home/jetbrains/Documents/puppet_queues/build/classes/java/test/").toURI().toURL();
+        URL main = new File("/home/jetbrains/Documents/puppet_queues/build/classes/java/main/").toURI().toURL();
+        URL u = new URL("file:/home/jetbrains/.IntelliJIdea2018.2/system/plugins-sandbox/plugins/inspection-test/classes/");
+        ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
+        Field f = contextCL.getClass().getDeclaredField("myURLs");
+        f.setAccessible(true);
+        List<URL> myURLs = (ArrayList<URL>) f.get(contextCL);
+
+        runner.addURLs(myURLs);
+        runner.addURL(u);
+        runner.addURL(test);
+        runner.addURL(main);
+        runner.setTestClassNames(classNames);
+        try {
+            runner.doWork();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        } catch (InstantiationException e) {
+            e.printStackTrace();
+        } catch (NoSuchMethodException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        }
     }
 }

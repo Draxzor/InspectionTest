@@ -3,7 +3,9 @@ package inspectionTest;
 import com.intellij.codeInspection.InspectionToolCmdlineOptionHelpProvider;
 import com.intellij.codeInspection.InspectionsBundle;
 import com.intellij.openapi.application.ApplicationStarter;
+import org.junit.runner.JUnitCore;
 
+import java.net.MalformedURLException;
 import java.util.Arrays;
 
 public class InspectionTestMain implements ApplicationStarter {
@@ -79,6 +81,9 @@ public class InspectionTestMain implements ApplicationStarter {
 
     @Override
     public void main(String[] args) {
+//        myApplication.startup();
+//        myApplication.myTestDirectory = "/home/jetbrains/IdeaProjects/myProject/src/test/java";
+        myApplication.myTestDirectory = "/home/jetbrains/Documents/puppet_queues/build/classes/java/test/";
         myApplication.startup();
     }
 
