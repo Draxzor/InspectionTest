@@ -10,8 +10,10 @@ import java.util.List;
 
 public class JUnitThread implements Runnable {
     private URLClassLoader ucl;
+    private ClassLoader previousCL;
     private List<String> testClassNames;
     private List<Class> testClasses;
+    private InspectionTestApplication app;
 
     public JUnitThread(){
         testClassNames = new ArrayList<>();
@@ -19,6 +21,7 @@ public class JUnitThread implements Runnable {
     }
 
     public void setClassLoader(URLClassLoader classLoader) {
+        previousCL = Thread.currentThread().getContextClassLoader();
         ucl = classLoader;
     }
     public void setTestClassNames(List<String> testClassNames) {
@@ -39,9 +42,12 @@ public class JUnitThread implements Runnable {
             Class<Result> resultClass = (Class<Result>) ucl.loadClass("org.junit.runner.Result");
             JUnitCore junit = coreClass.newInstance();
 
-            System.out.println(junit.getClass().getClassLoader().toString() + " " + ucl.toString());
             Result result = junit.run(testClasses.toArray(new Class[testClasses.size()]));
-            System.out.println(result.getFailureCount());
+            int failures = result.getFailureCount();
+            Thread.currentThread().setContextClassLoader(previousCL);
+
+            app.proceedTestResult(result.getFailureCount());
+//            System.out.println(result.getFailureCount());
 
         } catch (InstantiationException e) {
             e.printStackTrace();
@@ -51,5 +57,9 @@ public class JUnitThread implements Runnable {
             e.printStackTrace();
         }
 
+    }
+
+    public void setApp(inspectionTest.InspectionTestApplication app) {
+        this.app = app;
     }
 }

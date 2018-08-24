@@ -81,9 +81,8 @@ public class InspectionTestMain implements ApplicationStarter {
 
     @Override
     public void main(String[] args) {
-//        myApplication.startup();
-//        myApplication.myTestDirectory = "/home/jetbrains/IdeaProjects/myProject/src/test/java";
-        myApplication.myTestDirectory = "/home/jetbrains/Documents/puppet_queues/build/classes/java/test/";
+        myApplication.myTestClassDirectory = "/home/jetbrains/Documents/puppet_queues/build/classes/java/test/";
+        myApplication.myMainClassDirectory = "/home/jetbrains/Documents/puppet_queues/build/classes/java/main/";
         myApplication.startup();
     }
 

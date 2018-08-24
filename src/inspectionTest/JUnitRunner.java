@@ -35,20 +35,26 @@ public class JUnitRunner {
 
 
 
-    public void doWork() throws ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException, NoSuchFieldException {
+    public Thread doWork(InspectionTestApplication app) throws ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException, NoSuchFieldException {
         URLClassLoader ucl = new URLClassLoader(urls.toArray(new URL[urls.size()]));
 
-        Class<?> threadClass = ucl.loadClass("inspectionTest.JUnitThread");
+        Class<?> threadClass = ucl.loadClass("JUnitThread");
         Object threadObject = threadClass.newInstance();
 
         Method method = threadClass.getMethod("setClassLoader", new Class[]{URLClassLoader.class});
         method.invoke(threadObject, new Object[]{ucl});
+
+        method = threadClass.getMethod("setApp", new Class[]{InspectionTestApplication.class});
+        method.invoke(threadObject, new Object[]{app});
 
         method = threadClass.getMethod("setTestClassNames", new Class[]{List.class});
         method.invoke(threadObject, new Object[]{testClassNames});
         Thread t = new Thread((Runnable)threadObject);
         t.setContextClassLoader(ucl);
         t.start();
+
+        return t;
+
     }
 
     public void setTestClassNames(List<String> testClassNames) {
