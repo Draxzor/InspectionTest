@@ -1,4 +1,3 @@
-// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package inspectionTest;
 
 import com.intellij.codeInspection.*;
@@ -9,11 +8,16 @@ import com.intellij.ide.impl.PatchProjectUtil;
 import com.intellij.ide.impl.ProjectUtil;
 import com.intellij.openapi.application.ApplicationInfo;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.application.ex.ApplicationInfoEx;
 import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.compiler.*;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -24,12 +28,8 @@ import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.PsiManager;
-import com.intellij.task.ProjectTaskManager;
-import com.intellij.task.ProjectTaskNotification;
-import com.intellij.task.ProjectTaskResult;
 import org.apache.commons.io.FileUtils;
 import org.jdom.JDOMException;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -41,39 +41,34 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 
 @SuppressWarnings("UseOfSystemOutOrSystemErr")
 public class InspectionTestApplication {
     private static final Logger LOG = Logger.getInstance("#com.intellij.codeInspection.InspectionApplication");
-    private boolean isFirstRun = true;
 
-    private AtomicInteger testFailureCount;
+    private List<VirtualFile> modifiedFiles = new ArrayList<>();
+    private int failuresCount;
+    public boolean detectTestRoots;
+    public boolean detectMainRoots;
     public InspectionToolCmdlineOptionHelpProvider myHelpProvider;
     public String myProjectPath;
     public String mySourceDirectory;
     public String myStubProfile;
     public String myProfileName;
     public String myProfilePath;
-    public String myTestClassDirectory;
-    public String myMainClassDirectory;
+    public List<String> myTestClassDirectories = new ArrayList<>();
+    public List<String> myMainClassDirectories = new ArrayList<>();
     public boolean myRunWithEditorSettings;
     public boolean myRunGlobalToolsOnly;
     private Project myProject;
     private int myVerboseLevel;
+    private List<ProblemDescriptor> allProblems = new ArrayList<>();
+    private GlobalInspectionContextImpl context;
 
     public boolean myErrorCodeRequired = true;
 
-    public synchronized void proceedTestResult(int failureCount) {
-        if (isFirstRun) {
-            testFailureCount = new AtomicInteger(failureCount);
-            isFirstRun = false;
 
-        } else {
-
-        }
-    }
 
     public void startup() {
         if (myProjectPath == null) {
@@ -87,21 +82,17 @@ public class InspectionTestApplication {
         }
 
         final ApplicationEx application = ApplicationManagerEx.getApplicationEx();
-        application.runReadAction(() -> {
             try {
                 final ApplicationInfoEx appInfo = (ApplicationInfoEx) ApplicationInfo.getInstance();
                 logMessage(1, InspectionsBundle.message("inspection.application.starting.up",
                         appInfo.getFullApplicationName() + " (build " + appInfo.getBuild().asString() + ")"));
-                application.setSaveAllowed(false);
+                application.setSaveAllowed(true);
                 logMessageLn(1, InspectionsBundle.message("inspection.done"));
 
                 run();
             } catch (Exception e) {
                 LOG.error(e);
-            } finally {
-                if (myErrorCodeRequired) application.exit(true, true);
             }
-        });
     }
 
     private void printHelp() {
@@ -110,37 +101,43 @@ public class InspectionTestApplication {
         myHelpProvider.printHelpAndExit();
     }
 
-    private void rebuildProject() {
-        ApplicationEx application= ApplicationManagerEx.getApplicationEx();
-        application.runWriteAction(() -> {
-            ProjectTaskManager.getInstance(myProject).rebuildAllModules(new ProjectTaskNotification() {
-                @Override
-                public void finished(@NotNull ProjectTaskResult executionResult) {
-                    System.out.println("done rebuilding");
-                    application.invokeLater(() -> application.exit(true, true));
-                }
-            });
-        });
-    }
 
-    private void runAndApplyInspections(InspectionManagerEx im, PsiDirectory psiDirectory) {
+    private void runInspections() throws IOException, JDOMException {
+        logMessageLn(1, InspectionsBundle.message("inspection.done"));
+        logMessage(1, InspectionsBundle.message("inspection.application.initializing.project"));
+
+        InspectionProfileImpl inspectionProfile = loadInspectionProfile();
+        if (inspectionProfile == null) return;
+
+        final InspectionManagerEx im = (InspectionManagerEx) InspectionManager.getInstance(myProject);
+
+        im.createNewGlobalContext(true).setExternalProfile(inspectionProfile);
+        im.setProfile(inspectionProfile.getName());
+
+        VirtualFile vfsDir = LocalFileSystem.getInstance().findFileByPath(mySourceDirectory);
+        if (vfsDir == null) {
+            logError(InspectionsBundle.message("inspection.application.directory.cannot.be.found", mySourceDirectory));
+            printHelp();
+        }
+        PsiDirectory psiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsDir);
         final List<Tools> globalTools = new ArrayList<>();
         final List<Tools> localTools = new ArrayList<>();
         final List<Tools> globalSimpleTools = new ArrayList<>();
-        GlobalInspectionContextImpl context = im.createNewGlobalContext(true);
+        context = im.createNewGlobalContext(true);
         context.initializeTools(globalTools, localTools, globalSimpleTools);
         List<Tools> allTools = new ArrayList<>();
         allTools.addAll(globalTools);
         allTools.addAll(localTools);
         allTools.addAll(globalSimpleTools);
-        List<ProblemDescriptor> allProblems = inspectDirectoryRecursively(allTools, context, psiDirectory);
+        allProblems = inspectDirectoryRecursively(allTools, context, psiDirectory);
+    }
 
+    private void applyFixes() {
         for (ProblemDescriptor problem : allProblems) {
             QuickFix[] fixes = problem.getFixes();
             if (fixes != null && fixes.length != 0) {
                 QuickFix fix = fixes[0];
 //                for (QuickFix fix : fixes) {
-//                    if (fix.startInWriteAction()) {
                 WriteCommandAction.runWriteCommandAction(context.getProject(), () -> {
                     try {
                         System.out.println("applying " + fix.getName());
@@ -159,8 +156,12 @@ public class InspectionTestApplication {
     private void modifyPaths(String subdirectory) {
         myStubProfile = modifyPath(myStubProfile, subdirectory);
         mySourceDirectory = modifyPath(mySourceDirectory, subdirectory);
-        myTestClassDirectory = modifyPath(myTestClassDirectory, subdirectory);
-        myMainClassDirectory = modifyPath(myMainClassDirectory, subdirectory);
+        for (int i = 0; i < myMainClassDirectories.size(); i++) {
+            myMainClassDirectories.set(i, modifyPath(myMainClassDirectories.get(i), subdirectory));
+        }
+        for (int i = 0; i < myTestClassDirectories.size(); i++) {
+            myTestClassDirectories.set(i, modifyPath(myTestClassDirectories.get(i), subdirectory));
+        }
         myProjectPath = modifyPath(myProjectPath, subdirectory);
     }
 
@@ -194,59 +195,105 @@ public class InspectionTestApplication {
             gracefulExit();
             return;
         }
+
+
         ApplicationManager.getApplication().runWriteAction(() -> VirtualFileManager.getInstance().refreshWithoutFileWatcher(false));
         PatchProjectUtil.patchProject(myProject);
 
         if (mySourceDirectory == null) {
             mySourceDirectory = myProjectPath;
+
         } else {
             mySourceDirectory = mySourceDirectory.replace(File.separatorChar, '/');
         }
+
+        if (detectTestRoots || detectMainRoots) {
+            Module[] modules = ModuleManager.getInstance(myProject).getModules();
+            for (Module module : modules) {
+                VirtualFile mainClassesRoot = null;
+                VirtualFile testClassesRoot = null;
+                if (detectMainRoots) {
+                    mainClassesRoot = CompilerPaths.getModuleOutputDirectory(module, false);
+                }
+                if (detectTestRoots) {
+                    testClassesRoot = CompilerPaths.getModuleOutputDirectory(module, true);
+                }
+                if (testClassesRoot != null) {
+                    myTestClassDirectories.add(testClassesRoot.getPath());
+                }
+                if (mainClassesRoot != null) {
+                    myMainClassDirectories.add(mainClassesRoot.getPath());
+                }
+            }
+            if (myTestClassDirectories.size() == 0) {
+                throw new IllegalArgumentException("Test output path, specified in project settings is invalid");
+            } else if (myMainClassDirectories.size() == 0) {
+                throw new IllegalArgumentException("Main output path, specified in project settings is invalid");
+            }
+        }
+    }
+
+
+
+    private void makeCopy() throws IOException {
+        String subdirectory = myProject.getName() + "_copy";
+        FileUtils.copyDirectory(new File(myProjectPath), new File(myProjectPath + "/" + subdirectory));
+        modifyPaths(subdirectory);
+        initProject(myProjectPath, myProject);
+    }
+
+    private void recompileProject() {
+            CompilerManager compilerManager = CompilerManager.getInstance(myProject);
+            compilerManager.compile(compilerManager.createProjectCompileScope(myProject), new CompileStatusNotification() {
+                @Override
+                public void finished(boolean aborted, int errors, int warnings, CompileContext compileContext) {
+                    if (errors > 0) {
+                        System.err.println("Compilation finished with errors");
+                        CompilerMessage[] messages = compileContext.getMessages(CompilerMessageCategory.ERROR);
+
+                        for (CompilerMessage message : messages) {
+                            System.err.println(message.getMessage());
+                        }
+                    } else if (aborted) {
+                        System.err.println("Compilation cancelled");
+                    } else {
+                        System.out.println("Compilation finished");
+                        repeatTests();
+                    }
+                    ApplicationManager.getApplication().invokeLater(() -> ApplicationManagerEx.getApplicationEx().exit(true, true), ModalityState.NON_MODAL);
+                }
+            });
     }
 
     private void run() {
         try {
-            initProject(myProjectPath, null);
-
-            Thread testThread = runTests();
-
-            String subdirectory = myProject.getName() + "_copy";
-            FileUtils.copyDirectory(new File(myProjectPath), new File(myProjectPath + "/" + subdirectory));
-            modifyPaths(subdirectory);
-            initProject(myProjectPath, myProject);
-
-            logMessageLn(1, InspectionsBundle.message("inspection.done"));
-            logMessage(1, InspectionsBundle.message("inspection.application.initializing.project"));
-
-            InspectionProfileImpl inspectionProfile = loadInspectionProfile();
-            if (inspectionProfile == null) return;
-
-            final InspectionManagerEx im = (InspectionManagerEx) InspectionManager.getInstance(myProject);
-
-            im.createNewGlobalContext(true).setExternalProfile(inspectionProfile);
-            im.setProfile(inspectionProfile.getName());
-
-            VirtualFile vfsDir = LocalFileSystem.getInstance().findFileByPath(mySourceDirectory);
-            if (vfsDir == null) {
-                logError(InspectionsBundle.message("inspection.application.directory.cannot.be.found", mySourceDirectory));
-                printHelp();
-            }
-            PsiDirectory psiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsDir);
-            
-            runAndApplyInspections(im, psiDirectory);
-            rebuildProject();
-            testThread.join();
-            System.out.println(testFailureCount.get());
-
-            System.out.println("OK");
-        } catch (IOException e) {
-            LOG.error(e);
-            logError(e.getMessage());
-            printHelp();
+        initProject(myProjectPath, null);
+        JUnitRunner runner;
+        runner = runTests();
+        makeCopy();
+        ReadAction.run(() -> runInspections());
+        applyFixes();
+        failuresCount = runner.getFailuresCount();
+        recompileProject();
         } catch (Throwable e) {
             LOG.error(e);
             logError(e.getMessage());
             gracefulExit();
+        }
+    }
+
+    private void repeatTests() {
+        JUnitRunner newRunner = null;
+        try {
+            newRunner = runTests();
+
+            if (newRunner.getFailuresCount() > failuresCount) {
+                System.out.println("Invalid inspection(s) detected!");
+            } else {
+                System.out.println("Inspections are correct.");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -416,10 +463,19 @@ public class InspectionTestApplication {
         return files;
     }
 
-    private Thread runTests() throws MalformedURLException, NoSuchFieldException, IllegalAccessException, ClassNotFoundException, NoSuchMethodException, InstantiationException, InvocationTargetException {
-        VirtualFile vfsTestDir = LocalFileSystem.getInstance().findFileByPath(myTestClassDirectory);
-        PsiDirectory testPsiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsTestDir);
-        List<PsiFile> psiTestFiles = getAllPsiFiles(testPsiDirectory);
+    private JUnitRunner runTests() throws MalformedURLException, NoSuchFieldException, IllegalAccessException, ClassNotFoundException, NoSuchMethodException, InstantiationException, InvocationTargetException {
+        ClassLoader pluginCL = JUnitRunner.class.getClassLoader();
+        Class c = pluginCL.getClass().getSuperclass();
+        Field f = c.getDeclaredField("myURLs");
+        f.setAccessible(true);
+        List<URL> myURLs = (ArrayList<URL>) f.get(pluginCL);
+        List<PsiFile> psiTestFiles = new ArrayList<>();
+
+        for (String testClassDirectory : myTestClassDirectories) {
+            myURLs.add(new File(testClassDirectory).toURI().toURL());
+            PsiDirectory testPsiDirectory = PsiManager.getInstance(myProject).findDirectory(LocalFileSystem.getInstance().findFileByPath(testClassDirectory));
+            psiTestFiles.addAll(getAllPsiFiles(testPsiDirectory));
+        }
         List<String> classNames = new ArrayList<>();
 
         for (PsiFile psiTestFile : psiTestFiles) {
@@ -428,33 +484,22 @@ public class InspectionTestApplication {
             String fullName =  packageName + psiTestFile.getVirtualFile().getNameWithoutExtension();
             classNames.add(fullName);
         }
-
         JUnitRunner runner = new JUnitRunner();
-        URL test = new File(myTestClassDirectory).toURI().toURL();
-        URL main = new File(myMainClassDirectory).toURI().toURL();
-        URL u = new URL("file:/home/jetbrains/.IntelliJIdea2018.2/system/plugins-sandbox/plugins/inspection-test/classes/");
-//        JUnitThread.class.
-        ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
-        Field f = contextCL.getClass().getDeclaredField("myURLs");
-        f.setAccessible(true);
-        List<URL> myURLs = (ArrayList<URL>) f.get(contextCL);
 
-        runner.addURLs(myURLs);
-//        runner.addURL(u);
-        runner.addURL(test);
-        runner.addURL(main);
-        runner.setTestClassNames(classNames);
-        return runner.doWork(this);
-    }
-    @Nullable
-    private static String getPrefix(final String text) {
-        //noinspection HardCodedStringLiteral
-        int idx = text.indexOf(" in ");
-        if (idx == -1) {
-            //noinspection HardCodedStringLiteral
-            idx = text.indexOf(" of ");
+        for (String mainClassDirectory : myMainClassDirectories) {
+            myURLs.add(new File(mainClassDirectory).toURI().toURL());
         }
-
-        return idx == -1 ? null : text.substring(0, idx);
+        ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
+        f = contextCL.getClass().getDeclaredField("myURLs");
+        f.setAccessible(true);
+        myURLs.addAll((ArrayList<URL>) f.get(contextCL));
+        runner.addURLs(myURLs);
+        runner.setTestClassNames(classNames);
+        try {
+            runner.startThread();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return runner;
     }
 }

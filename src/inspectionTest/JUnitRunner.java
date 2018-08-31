@@ -1,21 +1,19 @@
 package inspectionTest;
 
-import com.intellij.ide.plugins.cl.PluginClassLoader;
-import org.junit.runner.JUnitCore;
-
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 public class JUnitRunner {
     private List<URL> urls;
     private List<String> testClassNames;
+    private boolean isRunning = false;
+    Object threadObject;
+    Class<?> threadClass;
 
     public JUnitRunner(){
         initURLS();
@@ -33,27 +31,37 @@ public class JUnitRunner {
         this.urls.addAll(urls);
     }
 
+    public int getFailuresCount() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        Method method = threadClass.getMethod("join", null);
+        method.invoke(threadObject, null);
 
+        method = threadClass.getMethod("getFailuresCount", null);
+        int failuresCount = (int) method.invoke(threadObject, null);
+        isRunning = false;
 
-    public Thread doWork(InspectionTestApplication app) throws ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException, NoSuchFieldException {
+        return failuresCount;
+    }
+
+    public void startThread() throws Exception {
         URLClassLoader ucl = new URLClassLoader(urls.toArray(new URL[urls.size()]));
 
-        Class<?> threadClass = ucl.loadClass("JUnitThread");
-        Object threadObject = threadClass.newInstance();
+        threadClass = ucl.loadClass("inspectionTest.JUnitThread");
+        threadObject = threadClass.newInstance();
+
 
         Method method = threadClass.getMethod("setClassLoader", new Class[]{URLClassLoader.class});
         method.invoke(threadObject, new Object[]{ucl});
 
-        method = threadClass.getMethod("setApp", new Class[]{InspectionTestApplication.class});
-        method.invoke(threadObject, new Object[]{app});
 
         method = threadClass.getMethod("setTestClassNames", new Class[]{List.class});
         method.invoke(threadObject, new Object[]{testClassNames});
-        Thread t = new Thread((Runnable)threadObject);
-        t.setContextClassLoader(ucl);
-        t.start();
 
-        return t;
+        method = threadClass.getMethod("setContextClassLoader", new Class[]{ClassLoader.class});
+        method.invoke(threadObject, new Object[]{ucl});
+
+        method = threadClass.getMethod("start", null);
+        method.invoke(threadObject, null);
+        isRunning = true;
 
     }
 

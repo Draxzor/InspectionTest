@@ -1,27 +1,33 @@
 package inspectionTest;
 
-import org.junit.runner.JUnitCore;
-import org.junit.runner.Result;
-
+import org.junit.platform.engine.DiscoverySelector;
+import org.junit.platform.launcher.Launcher;
+import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
+import org.junit.platform.launcher.core.LauncherFactory;
+import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
+import org.junit.platform.launcher.listeners.TestExecutionSummary;
 
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.List;
 
-public class JUnitThread implements Runnable {
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
+
+public class JUnitThread extends Thread {
     private URLClassLoader ucl;
-    private ClassLoader previousCL;
     private List<String> testClassNames;
     private List<Class> testClasses;
-    private InspectionTestApplication app;
+    private int failuresCount;
 
     public JUnitThread(){
+
+        super("JUnitThread");
         testClassNames = new ArrayList<>();
         testClasses = new ArrayList<>();
     }
 
     public void setClassLoader(URLClassLoader classLoader) {
-        previousCL = Thread.currentThread().getContextClassLoader();
         ucl = classLoader;
     }
     public void setTestClassNames(List<String> testClassNames) {
@@ -38,28 +44,30 @@ public class JUnitThread implements Runnable {
     public void run() {
         try {
             loadTestClasses();
-            Class<JUnitCore> coreClass = (Class<JUnitCore>) ucl.loadClass("org.junit.runner.JUnitCore");
-            Class<Result> resultClass = (Class<Result>) ucl.loadClass("org.junit.runner.Result");
-            JUnitCore junit = coreClass.newInstance();
+            List<DiscoverySelector> selectorList = new ArrayList<>();
+            for (Class c : testClasses) {
+                selectorList.add(selectClass(c));
+            }
+            LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request().selectors(selectorList).build();
 
-            Result result = junit.run(testClasses.toArray(new Class[testClasses.size()]));
-            int failures = result.getFailureCount();
-            Thread.currentThread().setContextClassLoader(previousCL);
+            Launcher launcher = LauncherFactory.create();
+            final SummaryGeneratingListener listener = new SummaryGeneratingListener();
 
-            app.proceedTestResult(result.getFailureCount());
-//            System.out.println(result.getFailureCount());
+            launcher.registerTestExecutionListeners(listener);
+            launcher.execute(request);
 
-        } catch (InstantiationException e) {
-            e.printStackTrace();
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
+            TestExecutionSummary summary = listener.getSummary();
+
+            failuresCount = (int) summary.getTestsFailedCount();
+            System.out.println("TESTS FINISHED");
+
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
         }
 
     }
 
-    public void setApp(inspectionTest.InspectionTestApplication app) {
-        this.app = app;
+    public int getFailuresCount() {
+        return failuresCount;
     }
 }

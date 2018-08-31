@@ -3,10 +3,10 @@ package inspectionTest;
 import com.intellij.codeInspection.InspectionToolCmdlineOptionHelpProvider;
 import com.intellij.codeInspection.InspectionsBundle;
 import com.intellij.openapi.application.ApplicationStarter;
-import org.junit.runner.JUnitCore;
 
-import java.net.MalformedURLException;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 public class InspectionTestMain implements ApplicationStarter {
     private InspectionTestApplication myApplication;
@@ -44,6 +44,8 @@ public class InspectionTestMain implements ApplicationStarter {
 
 
         try {
+            Set<String> availableArgs = new HashSet<>(Arrays.asList("-profileName", "-profilePath", "-d", "-v0", "-v1", "-v2", "-v3", "-t", "-m"));
+
             for (int i = 3; i < args.length; i++) {
                 String arg = args[i];
                 if ("-profileName".equals(arg)) {
@@ -65,11 +67,27 @@ public class InspectionTestMain implements ApplicationStarter {
                 else if ("-v3".equals(arg)) {
                     myApplication.setVerboseLevel(3);
                 }
+                else if ("-t".equals(arg)) {
+                    while (!availableArgs.contains(args[i + 1])) {
+                        myApplication.myTestClassDirectories.add(args[++i]);
+                        if (i + 1 >= args.length) break;
+                    }
+                }
+                else if ("-m".equals(arg)) {
+                    while (!availableArgs.contains(args[i + 1])) {
+                        myApplication.myMainClassDirectories.add(args[++i]);
+                        if (i + 1 >= args.length) break;
+                    }
+                }
                 else {
                     System.err.println("unexpected argument: " + arg);
                     printHelp();
                 }
             }
+            if (!myApplication.myMainClassDirectories.isEmpty())
+                myApplication.detectMainRoots = false;
+            if (!myApplication.myTestClassDirectories.isEmpty())
+                myApplication.detectTestRoots = false;
         }
         catch (ArrayIndexOutOfBoundsException e) {
             e.printStackTrace();
@@ -81,13 +99,24 @@ public class InspectionTestMain implements ApplicationStarter {
 
     @Override
     public void main(String[] args) {
-        myApplication.myTestClassDirectory = "/home/jetbrains/Documents/puppet_queues/build/classes/java/test/";
-        myApplication.myMainClassDirectory = "/home/jetbrains/Documents/puppet_queues/build/classes/java/main/";
         myApplication.startup();
     }
 
     public static void printHelp() {
-        System.out.println(InspectionsBundle.message("inspection.command.line.explanation"));
+        String help = "Expected parameters: <project_file_path> <inspection_profile> \n " +
+        "<inspections_profile> -- use here profile name configured in the project or locally or path to the inspection profile; can be stabbed when one of the -e|-profileName|-profilePath is used\n" +
+        "[<options>]\n " +
+        "Available options are:\n" +
+        "-d <directory_path>  --  directory to be inspected. Optional. Whole project is inspected by default.\n " +
+        "-t <test_classes_root>...  --  test classes root directories (only these test classes will be run); if not specified, root directory will be searched in project settings \n" +
+        "-m <main_classes_root>...  --  main classes root (needed for test classes); if not specified, root directory will be searched in project settings \n" +
+        "-v[0|1|2]            --  verbose level. 0 - silent, 1 - verbose, 2 - most verbose. \n" +
+        "-profileName         --  name of a profile defined in project \n " +
+        "-profilePath         --  absolute path to the profile file";
+        System.out.println(help);
+
+
+
         System.exit(1);
     }
 }
