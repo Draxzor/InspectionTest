@@ -62,7 +62,6 @@ public class JUnitRunner {
         method = threadClass.getMethod("start", null);
         method.invoke(threadObject, null);
         isRunning = true;
-
     }
 
     public void setTestClassNames(List<String> testClassNames) {

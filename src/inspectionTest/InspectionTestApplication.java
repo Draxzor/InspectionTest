@@ -16,6 +16,7 @@ import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.compiler.*;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.project.Project;
@@ -35,7 +36,6 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -49,8 +49,8 @@ public class InspectionTestApplication {
 
     private List<VirtualFile> modifiedFiles = new ArrayList<>();
     private int failuresCount;
-    public boolean detectTestRoots;
-    public boolean detectMainRoots;
+    public boolean detectTestRoots = true;
+    public boolean detectMainRoots = true;
     public InspectionToolCmdlineOptionHelpProvider myHelpProvider;
     public String myProjectPath;
     public String mySourceDirectory;
@@ -189,6 +189,7 @@ public class InspectionTestApplication {
         if (projectToClose != null)
             ProjectUtil.closeAndDispose(projectToClose);
         myProject = ProjectUtil.openOrImport(myProjectPath, null, false);
+        ApplicationManagerEx.getApplicationEx().setSaveAllowed(true);
 
         if (myProject == null) {
             logError("Unable to open project");
@@ -200,35 +201,38 @@ public class InspectionTestApplication {
         ApplicationManager.getApplication().runWriteAction(() -> VirtualFileManager.getInstance().refreshWithoutFileWatcher(false));
         PatchProjectUtil.patchProject(myProject);
 
-        if (mySourceDirectory == null) {
-            mySourceDirectory = myProjectPath;
+        // If we call initProject() for the first time
+        if (projectToClose == null) {
+            if (mySourceDirectory == null) {
+                mySourceDirectory = myProjectPath;
 
-        } else {
-            mySourceDirectory = mySourceDirectory.replace(File.separatorChar, '/');
-        }
-
-        if (detectTestRoots || detectMainRoots) {
-            Module[] modules = ModuleManager.getInstance(myProject).getModules();
-            for (Module module : modules) {
-                VirtualFile mainClassesRoot = null;
-                VirtualFile testClassesRoot = null;
-                if (detectMainRoots) {
-                    mainClassesRoot = CompilerPaths.getModuleOutputDirectory(module, false);
-                }
-                if (detectTestRoots) {
-                    testClassesRoot = CompilerPaths.getModuleOutputDirectory(module, true);
-                }
-                if (testClassesRoot != null) {
-                    myTestClassDirectories.add(testClassesRoot.getPath());
-                }
-                if (mainClassesRoot != null) {
-                    myMainClassDirectories.add(mainClassesRoot.getPath());
-                }
+            } else {
+                mySourceDirectory = mySourceDirectory.replace(File.separatorChar, '/');
             }
-            if (myTestClassDirectories.size() == 0) {
-                throw new IllegalArgumentException("Test output path, specified in project settings is invalid");
-            } else if (myMainClassDirectories.size() == 0) {
-                throw new IllegalArgumentException("Main output path, specified in project settings is invalid");
+
+            if (detectTestRoots || detectMainRoots) {
+                Module[] modules = ModuleManager.getInstance(myProject).getModules();
+                for (Module module : modules) {
+                    VirtualFile mainClassesRoot = null;
+                    VirtualFile testClassesRoot = null;
+                    if (detectMainRoots) {
+                        mainClassesRoot = CompilerPaths.getModuleOutputDirectory(module, false);
+                    }
+                    if (detectTestRoots) {
+                        testClassesRoot = CompilerPaths.getModuleOutputDirectory(module, true);
+                    }
+                    if (testClassesRoot != null) {
+                        myTestClassDirectories.add(testClassesRoot.getPath());
+                    }
+                    if (mainClassesRoot != null) {
+                        myMainClassDirectories.add(mainClassesRoot.getPath());
+                    }
+                }
+                if (myTestClassDirectories.size() == 0) {
+                    throw new IllegalArgumentException("Test output path, specified in project settings is invalid");
+                } else if (myMainClassDirectories.size() == 0) {
+                    throw new IllegalArgumentException("Main output path, specified in project settings is invalid");
+                }
             }
         }
     }
@@ -258,7 +262,10 @@ public class InspectionTestApplication {
                         System.err.println("Compilation cancelled");
                     } else {
                         System.out.println("Compilation finished");
-                        repeatTests();
+                        ApplicationManager.getApplication().invokeLater(() ->  {
+                            FileDocumentManager.getInstance().saveAllDocuments();
+                            repeatTests();
+                        }, ModalityState.NON_MODAL);
                     }
                     ApplicationManager.getApplication().invokeLater(() -> ApplicationManagerEx.getApplicationEx().exit(true, true), ModalityState.NON_MODAL);
                 }
@@ -463,12 +470,12 @@ public class InspectionTestApplication {
         return files;
     }
 
-    private JUnitRunner runTests() throws MalformedURLException, NoSuchFieldException, IllegalAccessException, ClassNotFoundException, NoSuchMethodException, InstantiationException, InvocationTargetException {
+    private JUnitRunner runTests() throws MalformedURLException, NoSuchFieldException, IllegalAccessException {
         ClassLoader pluginCL = JUnitRunner.class.getClassLoader();
         Class c = pluginCL.getClass().getSuperclass();
         Field f = c.getDeclaredField("myURLs");
         f.setAccessible(true);
-        List<URL> myURLs = (ArrayList<URL>) f.get(pluginCL);
+        List<URL> myURLs = new ArrayList<>((ArrayList<URL>) f.get(pluginCL));
         List<PsiFile> psiTestFiles = new ArrayList<>();
 
         for (String testClassDirectory : myTestClassDirectories) {

@@ -21,7 +21,6 @@ public class JUnitThread extends Thread {
     private int failuresCount;
 
     public JUnitThread(){
-
         super("JUnitThread");
         testClassNames = new ArrayList<>();
         testClasses = new ArrayList<>();
@@ -59,7 +58,7 @@ public class JUnitThread extends Thread {
             TestExecutionSummary summary = listener.getSummary();
 
             failuresCount = (int) summary.getTestsFailedCount();
-            System.out.println("TESTS FINISHED");
+            System.out.println("Tests finished with " + failuresCount + " failures.");
 
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
