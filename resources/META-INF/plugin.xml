@@ -2,7 +2,7 @@
   <id>inspection-test</id>
   <name>Inspections test</name>
   <version>1.0</version>
-  <vendor>JetBrains</vendor>
+  <vendor>Ilya Ponomarenko</vendor>
 
   <description><![CDATA[
       Allows you to test inspections.<br>

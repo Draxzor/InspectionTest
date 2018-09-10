@@ -174,6 +174,9 @@ public class InspectionTestApplication {
     private void initProject(String projectPath, Project projectToClose) {
         myProjectPath = projectPath;
         myProjectPath = myProjectPath.replace(File.separatorChar, '/');
+        if (myProjectPath.endsWith("/"))
+            myProjectPath = myProjectPath.substring(0, myProjectPath.length() - 1);
+
         VirtualFile vfsProject = LocalFileSystem.getInstance().findFileByPath(myProjectPath);
         if (vfsProject == null) {
             logError(InspectionsBundle.message("inspection.application.file.cannot.be.found", myProjectPath));
@@ -486,10 +489,14 @@ public class InspectionTestApplication {
         List<String> classNames = new ArrayList<>();
 
         for (PsiFile psiTestFile : psiTestFiles) {
-            String packageName = ((PsiJavaFile)psiTestFile).getPackageName();
-            if (packageName != "") packageName += ".";
-            String fullName =  packageName + psiTestFile.getVirtualFile().getNameWithoutExtension();
-            classNames.add(fullName);
+            if (psiTestFile instanceof PsiJavaFile)
+            {
+                String packageName = ((PsiJavaFile)psiTestFile).getPackageName();
+                if (packageName != "") packageName += ".";
+                String fullName =  packageName + psiTestFile.getVirtualFile().getNameWithoutExtension();
+                classNames.add(fullName);
+
+            }
         }
         JUnitRunner runner = new JUnitRunner();
 
