@@ -6,6 +6,7 @@ Plugin that lets you test inspections. It applies all specified inspections and 
 Usage: install plugin and launch your intellij idea from cmd with following arguments:<br>
       idea.sh test-inspect <path_to_your_project> <path_to_inspection_profile.xml> -v<verbose_level(1,2,3)> -d <path_to_source_directory> <br>
 Optional: <br>
+-maven -- if you want to test maven project (if you specify this option, you can skip -d, -t and -m, all directories will be detected automatically) <br>
 -t <test_classes_root>... -- test classes root directories (only these test classes will be run); if not specified, root directory will be searched in project settings <br>
 -m <main_classes_root>...  --  main classes root (needed for test classes); if not specified, root directory will be searched in project settings <br>
 
