@@ -6,10 +6,7 @@ import com.intellij.conversion.ConversionListener;
 import com.intellij.conversion.ConversionService;
 import com.intellij.ide.impl.PatchProjectUtil;
 import com.intellij.ide.impl.ProjectUtil;
-import com.intellij.openapi.application.ApplicationInfo;
-import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ModalityState;
-import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.application.*;
 import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.application.ex.ApplicationInfoEx;
 import com.intellij.openapi.application.ex.ApplicationManagerEx;
@@ -29,18 +26,26 @@ import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.PsiManager;
+import com.intellij.psi.search.scope.packageSet.NamedScope;
 import org.apache.commons.io.FileUtils;
+import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
+import org.apache.maven.plugins.surefire.report.ReportTestSuite;
+import org.apache.maven.plugins.surefire.report.SurefireReportParser;
+import org.apache.maven.reporting.MavenReportException;
 import org.jdom.JDOMException;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.idea.maven.project.*;
+import org.jetbrains.idea.maven.utils.MavenUtil;
+import org.jetbrains.idea.maven.wizards.MavenModuleBuilder;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.lang.reflect.Field;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.security.CodeSource;
+import java.security.ProtectionDomain;
+import java.util.*;
+import java.util.stream.Stream;
 
 
 @SuppressWarnings("UseOfSystemOutOrSystemErr")
@@ -51,20 +56,24 @@ public class InspectionTestApplication {
     private int failuresCount;
     public boolean detectTestRoots = true;
     public boolean detectMainRoots = true;
+    public boolean isMaven = false;
+    private boolean isDefaultProfile = false;
     public InspectionToolCmdlineOptionHelpProvider myHelpProvider;
-    public String myProjectPath;
-    public String mySourceDirectory;
+    String myProjectPath;
+//    public String mySourceDirectory;
+    public List<String> mySourceDirectories = new ArrayList<>();
     public String myStubProfile;
     public String myProfileName;
     public String myProfilePath;
     public List<String> myTestClassDirectories = new ArrayList<>();
     public List<String> myMainClassDirectories = new ArrayList<>();
-    public boolean myRunWithEditorSettings;
-    public boolean myRunGlobalToolsOnly;
+    private boolean myRunWithEditorSettings;
+    boolean myRunGlobalToolsOnly;
     private Project myProject;
     private int myVerboseLevel;
     private List<ProblemDescriptor> allProblems = new ArrayList<>();
     private GlobalInspectionContextImpl context;
+    private MavenUtils mavenUtils;
 
     public boolean myErrorCodeRequired = true;
 
@@ -114,12 +123,18 @@ public class InspectionTestApplication {
         im.createNewGlobalContext(true).setExternalProfile(inspectionProfile);
         im.setProfile(inspectionProfile.getName());
 
-        VirtualFile vfsDir = LocalFileSystem.getInstance().findFileByPath(mySourceDirectory);
-        if (vfsDir == null) {
-            logError(InspectionsBundle.message("inspection.application.directory.cannot.be.found", mySourceDirectory));
-            printHelp();
+//        List<VirtualFile> vfsDirs = new ArrayList<>();
+        List<PsiDirectory> psiDirs = new ArrayList<>();
+
+        for (String dir : mySourceDirectories) {
+            VirtualFile vfsDir = LocalFileSystem.getInstance().findFileByPath(dir);
+            if (vfsDir == null) {
+                logError(InspectionsBundle.message("inspection.application.directory.cannot.be.found", dir));
+                printHelp();
+            }
+            PsiDirectory psiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsDir);
+            psiDirs.add(psiDirectory);
         }
-        PsiDirectory psiDirectory = PsiManager.getInstance(myProject).findDirectory(vfsDir);
         final List<Tools> globalTools = new ArrayList<>();
         final List<Tools> localTools = new ArrayList<>();
         final List<Tools> globalSimpleTools = new ArrayList<>();
@@ -129,7 +144,10 @@ public class InspectionTestApplication {
         allTools.addAll(globalTools);
         allTools.addAll(localTools);
         allTools.addAll(globalSimpleTools);
-        allProblems = inspectDirectoryRecursively(allTools, context, psiDirectory);
+
+        for (PsiDirectory psiDirectory : psiDirs) {
+            allProblems.addAll(inspectDirectoryRecursively(allTools, context, psiDirectory));
+        }
     }
 
     private void applyFixes() {
@@ -139,11 +157,14 @@ public class InspectionTestApplication {
                 QuickFix fix = fixes[0];
 //                for (QuickFix fix : fixes) {
                 WriteCommandAction.runWriteCommandAction(context.getProject(), () -> {
-                    try {
-                        System.out.println("applying " + fix.getName());
-                        fix.applyFix(context.getProject(), problem);
-                    } catch (Exception e) {
-                        System.out.println(fix.getName() + " could not be applied");
+                    if (problem.getPsiElement() != null && fix != null ) {
+                        try {
+                            System.out.println("applying " + fix.getName());
+                            fix.applyFix(context.getProject(), problem);
+                        } catch (Throwable e) {
+                            if (fix != null)
+                                System.out.println(fix.getName() + " could not be applied");
+                        }
                     }
 
                 });
@@ -155,7 +176,11 @@ public class InspectionTestApplication {
 
     private void modifyPaths(String subdirectory) {
         myStubProfile = modifyPath(myStubProfile, subdirectory);
-        mySourceDirectory = modifyPath(mySourceDirectory, subdirectory);
+
+        for (int i = 0; i < mySourceDirectories.size(); i++) {
+            mySourceDirectories.set(i, modifyPath(mySourceDirectories.get(i), subdirectory));
+        }
+
         for (int i = 0; i < myMainClassDirectories.size(); i++) {
             myMainClassDirectories.set(i, modifyPath(myMainClassDirectories.get(i), subdirectory));
         }
@@ -170,10 +195,10 @@ public class InspectionTestApplication {
         return newPath.insert(myProjectPath.length(), "/" + subdirectory).toString();
     }
 
-
-    private void initProject(String projectPath, Project projectToClose) {
+    private void initProject(String projectPath, Project projectToClose) throws IOException {
         myProjectPath = projectPath;
         myProjectPath = myProjectPath.replace(File.separatorChar, '/');
+        ApplicationManager.getApplication().runWriteAction(() -> VirtualFileManager.getInstance().refreshWithoutFileWatcher(false));
         VirtualFile vfsProject = LocalFileSystem.getInstance().findFileByPath(myProjectPath);
         if (vfsProject == null) {
             logError(InspectionsBundle.message("inspection.application.file.cannot.be.found", myProjectPath));
@@ -203,11 +228,20 @@ public class InspectionTestApplication {
 
         // If we call initProject() for the first time
         if (projectToClose == null) {
-            if (mySourceDirectory == null) {
-                mySourceDirectory = myProjectPath;
+            if (isMaven) {
+                initMavenProject(myProject, vfsProject);
+
+                return;
+            }
+
+
+            if (mySourceDirectories.isEmpty()) {
+                mySourceDirectories.add(myProjectPath);
 
             } else {
-                mySourceDirectory = mySourceDirectory.replace(File.separatorChar, '/');
+                for (int i = 0; i < mySourceDirectories.size(); i++) {
+                    mySourceDirectories.set(i, mySourceDirectories.get(i).replace(File.separatorChar, '/'));
+                }
             }
 
             if (detectTestRoots || detectMainRoots) {
@@ -237,18 +271,35 @@ public class InspectionTestApplication {
         }
     }
 
-
-
     private void makeCopy() throws IOException {
         String subdirectory = myProject.getName() + "_copy";
+        boolean ok = new File(myProjectPath + "/" + subdirectory).mkdirs();
+        FileDocumentManager.getInstance().saveAllDocuments();
         FileUtils.copyDirectory(new File(myProjectPath), new File(myProjectPath + "/" + subdirectory));
         modifyPaths(subdirectory);
         initProject(myProjectPath, myProject);
     }
 
-    private void recompileProject() {
-            CompilerManager compilerManager = CompilerManager.getInstance(myProject);
-            compilerManager.compile(compilerManager.createProjectCompileScope(myProject), new CompileStatusNotification() {
+    private void recompileProject() throws IOException {
+        if (isMaven) {
+            try {
+                FileDocumentManager.getInstance().saveAllDocuments();
+                mavenUtils.mavenCompile(myProjectPath);
+                    FileDocumentManager.getInstance().saveAllDocuments();
+                    repeatTests();
+                } catch (InterruptedException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                FileUtils.deleteDirectory(new File(myProjectPath));
+                FileDocumentManager.getInstance().saveAllDocuments();
+                ApplicationManager.getApplication().invokeLater(() -> ApplicationManagerEx.getApplicationEx().exit(true, true), ModalityState.NON_MODAL);
+                return;
+            }
+        }
+        CompilerManager compilerManager = CompilerManager.getInstance(myProject);
+        compilerManager.compile(compilerManager.createProjectCompileScope(myProject), new CompileStatusNotification() {
                 @Override
                 public void finished(boolean aborted, int errors, int warnings, CompileContext compileContext) {
                     if (errors > 0) {
@@ -274,13 +325,24 @@ public class InspectionTestApplication {
 
     private void run() {
         try {
+        if (new File(myProjectPath + "_copy").exists()) {
+            FileUtils.deleteDirectory(new File(myProjectPath + "_copy"));
+            FileDocumentManager.getInstance().saveAllDocuments();
+
+        }
         initProject(myProjectPath, null);
-        JUnitRunner runner;
-        runner = runTests();
+        JUnitRunner runner = null;
+        if (isMaven) {
+            mavenUtils.runTests(myProjectPath);
+            failuresCount = mavenUtils.getFailures();
+        } else {
+            runner = runTests();
+        }
         makeCopy();
         ReadAction.run(() -> runInspections());
         applyFixes();
-        failuresCount = runner.getFailuresCount();
+        if (!isMaven)
+            failuresCount = runner.getFailuresCount();
         recompileProject();
         } catch (Throwable e) {
             LOG.error(e);
@@ -290,17 +352,28 @@ public class InspectionTestApplication {
     }
 
     private void repeatTests() {
-        JUnitRunner newRunner = null;
-        try {
-            newRunner = runTests();
-
-            if (newRunner.getFailuresCount() > failuresCount) {
-                System.out.println("Invalid inspection(s) detected!");
-            } else {
-                System.out.println("Inspections are correct.");
+        int newFailruesCount = 0;
+        if (isMaven) {
+            try {
+                mavenUtils.runTests(myProjectPath);
+                newFailruesCount = mavenUtils.getFailures();
+            } catch (MavenReportException e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } else {
+            JUnitRunner newRunner = null;
+            try {
+                newRunner = runTests();
+                newFailruesCount = newRunner.getFailuresCount();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+         if (newFailruesCount > failuresCount)  {
+            System.out.println("Invalid inspection(s) detected!");
+        } else {
+            System.out.println("Inspections are correct.");
         }
     }
 
@@ -353,10 +426,11 @@ public class InspectionTestApplication {
                 inspectionProfile = loadProfileByPath(myStubProfile);
                 if (inspectionProfile != null) return inspectionProfile;
             }
-
-            inspectionProfile = InspectionProjectProfileManager.getInstance(myProject).getCurrentProfile();
-            logError("Using default project profile");
         }
+        URL url = this.getClass().getResource("/META-INF/defaultProfile.xml");
+        inspectionProfile = loadProfileByPath(url.getPath());
+        logError("Using default project profile");
+
         return inspectionProfile;
     }
 
@@ -445,8 +519,14 @@ public class InspectionTestApplication {
         if (allFiles.size() != 0) {
             for (PsiFile file : allFiles) {
                 for (Tools tool : tools) {
+                    List<ProblemDescriptor> list = new ArrayList<>();
+                    try {
+                        list = InspectionEngine.runInspectionOnFile(file, tool.getTool(), context);
+                    } catch (Throwable e) {
+
+                    }
 //                    System.out.println(tool.getTool().getShortName() + " to " + file.getName());
-                    problems.addAll(InspectionEngine.runInspectionOnFile(file, tool.getTool(), context));
+                    problems.addAll(list);
                 }
             }
         }
@@ -457,11 +537,11 @@ public class InspectionTestApplication {
     private List<PsiFile> getAllPsiFiles(PsiDirectory directory) {
         List<PsiFile> files = new ArrayList<>();
         PsiFile[] filesArray = directory.getFiles();
-        if (filesArray.length != 0) {
+        if (filesArray != null && filesArray.length != 0) {
             files.addAll(Arrays.asList(filesArray));
         }
         PsiDirectory[] subdirectories = directory.getSubdirectories();
-        if (subdirectories.length != 0) {
+        if (subdirectories != null && subdirectories.length != 0) {
             for (PsiDirectory subdirectory : subdirectories) {
                 files.addAll(getAllPsiFiles(subdirectory));
             }
@@ -486,10 +566,15 @@ public class InspectionTestApplication {
         List<String> classNames = new ArrayList<>();
 
         for (PsiFile psiTestFile : psiTestFiles) {
-            String packageName = ((PsiJavaFile)psiTestFile).getPackageName();
-            if (packageName != "") packageName += ".";
-            String fullName =  packageName + psiTestFile.getVirtualFile().getNameWithoutExtension();
-            classNames.add(fullName);
+            if (psiTestFile instanceof PsiJavaFile &&
+                psiTestFile.getVirtualFile().getNameWithoutExtension().contains("Test")) {
+                String packageName = ((PsiJavaFile) psiTestFile).getPackageName();
+                if (packageName != "") packageName += ".";
+                String fullName = packageName + psiTestFile.getVirtualFile().getNameWithoutExtension();
+                classNames.add(fullName);
+            } else {
+                myURLs.add(new File(psiTestFile.getVirtualFile().getPath()).toURI().toURL());
+            }
         }
         JUnitRunner runner = new JUnitRunner();
 
@@ -508,5 +593,27 @@ public class InspectionTestApplication {
             e.printStackTrace();
         }
         return runner;
+    }
+
+    private void initMavenProject(Project project, VirtualFile projectPath) {
+        mavenUtils = new MavenUtils(project, projectPath);
+
+        List<MavenProjectReaderResult> projects = mavenUtils.getAllProjects();
+        mySourceDirectories.clear();
+
+        for (MavenProjectReaderResult mavenProject : projects) {
+            List<String> sourceDirectories = mavenProject.mavenModel.getBuild().getSources();
+            for (String dir : sourceDirectories) {
+                if (new File(dir).exists()) {
+                    mySourceDirectories.add(dir);
+                }
+            }
+        }
+
+        try {
+            mavenUtils.mavenCompile(myProjectPath);
+        } catch (InterruptedException | IOException e) {
+            e.printStackTrace();
+        }
     }
 }

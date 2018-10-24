@@ -1,0 +1,11 @@
+<component name="libraryTable">
+  <library name="ant:ant:1.7.0" type="repository">
+    <properties maven-id="ant:ant:1.7.0" />
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/lib/ant-1.7.0.jar!/" />
+      <root url="jar://$PROJECT_DIR$/lib/ant-launcher-1.7.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

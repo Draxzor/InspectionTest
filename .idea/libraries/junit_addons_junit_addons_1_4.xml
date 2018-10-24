@@ -1,0 +1,11 @@
+<component name="libraryTable">
+  <library name="junit-addons:junit-addons:1.4" type="repository">
+    <properties maven-id="junit-addons:junit-addons:1.4" />
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/lib/junit-addons-1.4.jar!/" />
+      <root url="jar://$PROJECT_DIR$/lib/junit-3.8.1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

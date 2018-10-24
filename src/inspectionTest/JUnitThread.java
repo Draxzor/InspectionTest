@@ -1,8 +1,10 @@
 package inspectionTest;
 
+import org.apache.maven.surefire.util.DirectoryScanner;
 import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.TestPlan;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
 import org.junit.platform.launcher.core.LauncherFactory;
 import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
@@ -35,8 +37,10 @@ public class JUnitThread extends Thread {
 
     private void loadTestClasses() throws ClassNotFoundException {
         for (String className : testClassNames) {
-            testClasses.add(ucl.loadClass(className));
+            if (className.contains("Test"))
+                testClasses.add(ucl.loadClass(className));
         }
+
     }
 
     @Override
@@ -50,8 +54,12 @@ public class JUnitThread extends Thread {
             LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request().selectors(selectorList).build();
 
             Launcher launcher = LauncherFactory.create();
+            ClassLoader context = Thread.currentThread().getContextClassLoader();
+            ClassLoader cl1 = launcher.getClass().getClassLoader();
+            ClassLoader cl2 = testClasses.get(0).getClassLoader();
             final SummaryGeneratingListener listener = new SummaryGeneratingListener();
 
+            TestPlan testPlan = launcher.discover(request);
             launcher.registerTestExecutionListeners(listener);
             launcher.execute(request);
 

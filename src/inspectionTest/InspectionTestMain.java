@@ -44,7 +44,7 @@ public class InspectionTestMain implements ApplicationStarter {
 
 
         try {
-            Set<String> availableArgs = new HashSet<>(Arrays.asList("-profileName", "-profilePath", "-d", "-v0", "-v1", "-v2", "-v3", "-t", "-m"));
+            Set<String> availableArgs = new HashSet<>(Arrays.asList("-profileName", "-profilePath", "-d", "-v0", "-v1", "-v2", "-v3", "-t", "-m", "-maven"));
 
             for (int i = 3; i < args.length; i++) {
                 String arg = args[i];
@@ -53,7 +53,7 @@ public class InspectionTestMain implements ApplicationStarter {
                 } else if ("-profilePath".equals(arg)) {
                     myApplication.myProfilePath = args[++i];
                 } else if ("-d".equals(arg)) {
-                    myApplication.mySourceDirectory = args[++i];
+                    myApplication.mySourceDirectories.add(args[++i]);
                 }
                 else if ("-v0".equals(arg)) {
                     myApplication.setVerboseLevel(0);
@@ -66,6 +66,9 @@ public class InspectionTestMain implements ApplicationStarter {
                 }
                 else if ("-v3".equals(arg)) {
                     myApplication.setVerboseLevel(3);
+                }
+                else if ("-maven".equals(arg)) {
+                    myApplication.isMaven = true;
                 }
                 else if ("-t".equals(arg)) {
                     while (!availableArgs.contains(args[i + 1])) {

@@ -2,19 +2,21 @@
   <id>inspection-test</id>
   <name>Inspections test</name>
   <version>1.0</version>
-  <vendor>JetBrains</vendor>
+  <vendor>Ilya Ponomarenko</vendor>
 
   <description><![CDATA[
       Allows you to test inspections.<br>
       Usage: install plugin and launch your intellij idea from cmd with following arguments:<br>
-      idea.sh test-inspect < path_to_your_project > < path_to_inspection_profile.xml > -v< verbose_level(1,2,3) > -d < path_to_source_directory >
+      idea.sh test-inspect < path_to_your_project > < path_to_inspection_profile.xml > -v< verbose_level(1,2,3) >
       Optional:
+-maven -- if you want to test maven project (if you specify this option, you can skip -d, -t and -m, all directories will be detected automatically)
+-d < path_to_source_directory >
 -t <test_classes_root>... -- test classes root directories (only these test classes will be run); if not specified, root directory will be searched in project settings
 -m <main_classes_root>... -- main classes root (needed for test classes); if not specified, root directory will be searched in project settings
     ]]></description>
 
   <change-notes><![CDATA[
-      now supports Junit5
+      now supports Maven
     ]]>
   </change-notes>
 
@@ -31,6 +33,8 @@
     <appStarter implementation="inspectionTest.InspectionTestMain"/>
     <!-- Add your extensions here -->
   </extensions>
+  <depends>org.jetbrains.idea.maven</depends>
+  <!--<depends>org.jetbrains.idea.maven.</depends>-->
 
 
 </idea-plugin>
